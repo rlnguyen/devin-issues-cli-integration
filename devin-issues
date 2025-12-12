@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""
+Devin Issues CLI Entry Point
+
+This is a DEMO convenience script that allows running the CLI as:
+    ./devin-issues list python/cpython
+    
+Instead of:
+    python -m cli.main list python/cpython
+"""
+
+import sys
+from cli.main import app
+
+if __name__ == "__main__":
+    app()
+
