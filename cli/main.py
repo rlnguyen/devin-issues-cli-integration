@@ -69,8 +69,6 @@ def get_label_color(label_name: str) -> str:
 def format_time_ago(dt: datetime) -> str:
     """
     Format a datetime as 'X days ago' or 'X hours ago'.
-    
-    Unique feature: Human-readable time display!
     """
     now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
     diff = now - dt
@@ -122,6 +120,7 @@ def list(
         if label:
             params["labels"] = label
         
+        # GET all issues from repo/name
         response = httpx.get(
             f"{url}/api/v1/issues/{owner}/{repo_name}",
             params=params,
@@ -189,7 +188,7 @@ def list(
         # Comment count
         comments_str = str(issue.get('comments', 0))
         
-        # ime ago instead of raw date
+        # Time ago instead of raw date
         updated_at = datetime.fromisoformat(issue['updated_at'].replace('Z', '+00:00'))
         time_ago = format_time_ago(updated_at)
         

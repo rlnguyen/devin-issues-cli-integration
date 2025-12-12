@@ -7,6 +7,7 @@ This package contains client classes for external APIs:
 """
 
 from app.clients.github_client import GitHubClient
+from app.clients.devin_client import DevinClient
 
-__all__ = ["GitHubClient"]
+__all__ = ["GitHubClient", "DevinClient"]
 
