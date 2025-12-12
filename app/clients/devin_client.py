@@ -14,7 +14,6 @@ from typing import Optional, Dict, Any
 from app.config import settings
 from app.pyd_models.devin_models import (
     SessionResponse,
-    SessionStatus,
     ScopingOutput,
     ExecutionOutput,
     create_scoping_schema,
@@ -121,7 +120,10 @@ class DevinClient:
                 
                 raise DevinAPIError(response.status_code, error_msg)
             
-            return response.json()
+            response_data = response.json()
+            # Log response at INFO level for debugging
+            # logger.info(f"Devin API response: {response_data}")
+            return response_data
     
     def create_session(
         self,
@@ -178,8 +180,7 @@ class DevinClient:
         self,
         session_id: str,
         timeout: int = 1800,  # 30 minutes
-        poll_interval: int = 15,  # 15 seconds
-        max_interval: int = 30,  # Max 30 seconds between polls
+        poll_interval: int = 15  # 15 seconds
     ) -> SessionResponse:
         """
         Poll a session until it completes (or times out).
@@ -190,7 +191,6 @@ class DevinClient:
             session_id: Session to poll
             timeout: Maximum time to wait in seconds
             poll_interval: Initial polling interval in seconds
-            max_interval: Maximum interval between polls
             
         Returns:
             SessionResponse when session is complete
@@ -216,23 +216,24 @@ class DevinClient:
             # Get current status
             session = self.get_session(session_id)
             
-            logger.debug(f"Session {session_id} status: {session.status}")
-            
-            # Check if complete
-            if session.status == SessionStatus.FINISHED:
-                logger.info(f"✅ Session {session_id} finished! (took {elapsed:.1f}s)")
+            # Log at INFO level so we can see it in the logs
+            logger.info(f"📊 Polling: status='{session.status}', has_output={bool(session.structured_output)}")
+            logger.info(f"session.status: {session.status}")
+            # Check if complete (either status indicates done OR we have structured output)
+            if session.status and session.status.lower() in ["finished", "completed", "done", "idle", "succeeded"]:
+                logger.info(f"✅ Session {session_id} finished by status! (took {elapsed:.1f}s)")
                 return session
-            
-            elif session.status == SessionStatus.ERROR:
+            elif session.structured_output:  # If we have structured output, consider it done
+                logger.info(f"✅ Session {session_id} finished with output! (took {elapsed:.1f}s)")
+                return session
+            elif session.status and session.status.lower() in ["error", "failed"]:
                 raise DevinAPIError(500, f"Session {session_id} encountered an error")
-            
-            elif session.status == SessionStatus.BLOCKED:
+            elif session.status and session.status.lower() == "blocked":
                 logger.warning(f"⚠️ Session {session_id} is blocked - may need user input")
                 # Continue polling in case it unblocks
             
             # Wait before next poll (with exponential backoff)
             time.sleep(current_interval)
-            current_interval = min(current_interval * 1.2, max_interval)
     
     def create_scoping_session(
         self,

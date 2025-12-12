@@ -35,7 +35,7 @@ class ScopingOutput(BaseModel):
     summary: str = Field(..., description="Brief summary of the issue and approach")
     plan: List[str] = Field(..., description="Step-by-step implementation plan")
     risk_level: str = Field(..., description="Risk level: low, medium, or high")
-    est_effort_hours: float = Field(..., description="Estimated effort in hours")
+    estimated_effort: float = Field(..., description="Estimated effort in hours")
     confidence: float = Field(..., description="Confidence score (0.0 to 1.0)")
     
     class Config:
@@ -84,7 +84,7 @@ class SessionResponse(BaseModel):
     This contains session metadata and status.
     """
     session_id: str = Field(..., description="Unique session ID")
-    status: SessionStatus = Field(..., description="Current session status")
+    status: Optional[str] = Field(None, description="Current session status (e.g., 'queued', 'running', 'finished')")
     created_at: Optional[datetime] = Field(None, description="When session was created")
     updated_at: Optional[datetime] = Field(None, description="When session was last updated")
     url: Optional[str] = Field(None, description="URL to view session in browser")
@@ -146,7 +146,7 @@ def create_scoping_schema() -> Dict[str, Any]:
                 "enum": ["low", "medium", "high"],
                 "description": "Risk level for implementing this fix"
             },
-            "est_effort_hours": {
+            "estimated_effort": {
                 "type": "number",
                 "description": "Estimated effort in hours"
             },
@@ -157,7 +157,7 @@ def create_scoping_schema() -> Dict[str, Any]:
                 "description": "Confidence score (0.0 = no confidence, 1.0 = very confident)"
             }
         },
-        "required": ["summary", "plan", "risk_level", "est_effort_hours", "confidence"]
+        "required": ["summary", "plan", "risk_level", "estimated_effort", "confidence"]
     }
 
 

@@ -11,12 +11,14 @@ Endpoints:
 - GET /api/v1/sessions/{session_id} - Get session details (To-do)
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Optional
 import logging
 
 from app.clients.github_client import GitHubClient, GitHubAPIError
+from app.clients.devin_client import DevinClient, DevinAPIError
 from app.pyd_models.github_models import GitHubIssue
+from app.pyd_models.devin_models import ScopingOutput, SessionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -154,60 +156,266 @@ async def get_issue(
         )
 
 
-# Placeholder endpoints for Devin integration functions
+# Devin Integration Endpoints
 
 @router.post("/scope/{owner}/{repo}/{issue_number}")
-async def scope_issue(owner: str, repo: str, issue_number: int):
+async def scope_issue(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    wait: bool = Query(
+        True,
+        description="Wait for scoping to complete (True) or return session ID immediately (False)"
+    ),
+):
     """
-    Scope an issue using Devin.
+    🔍 Scope an issue using Devin AI.
     
-    This endpoint will:
-    1. Fetch the issue from GitHub
-    2. Create a Devin session to analyze the issue
-    3. Return implementation plan and confidence score
+    This endpoint:
+    1. Fetches the issue and comments from GitHub
+    2. Creates a Devin session to analyze the issue
+    3. Optionally waits for Devin to complete the analysis
+    4. Returns implementation plan, confidence score, and session details
     
+    **Parameters:**
+    - **owner**: Repository owner
+    - **repo**: Repository name
+    - **issue_number**: Issue number to scope
+    - **wait**: If True, waits for Devin to complete (default). If False, returns session ID immediately.
+    
+    **Returns:**
+    - Session metadata
+    - Scoping output (if wait=True and session completes)
+    
+    **Example:**
+    ```
+    POST /api/v1/scope/python/cpython/12345?wait=true
+    ```
     """
-    raise HTTPException(
-        status_code=501,
-        detail="To-do"
-    )
+    logger.info(f"🔍 Scoping {owner}/{repo}#{issue_number} (wait={wait})")
+    
+    try:
+        # Step 1: Fetch issue from GitHub
+        github_client = GitHubClient()
+        
+        try:
+            issue = github_client.get_issue(owner, repo, issue_number)
+            logger.info(f"📋 Fetched issue: {issue.title}")
+        except GitHubAPIError as e:
+            logger.error(f"❌ GitHub error: {e}")
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "Failed to fetch issue from GitHub",
+                    "message": e.message,
+                    "owner": owner,
+                    "repo": repo,
+                    "issue_number": issue_number
+                }
+            )
+        
+        # Step 2: Get comments for additional context
+        try:
+            comments_obj = github_client.get_issue_comments(owner, repo, issue_number)
+            comment_texts = [comment.body for comment in comments_obj[:10]]  # Max 10 comments for now
+            logger.info(f"💬 Fetched {len(comment_texts)} comments")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to fetch comments: {e}")
+            comment_texts = []
+        
+        # Step 3: Create Devin scoping session
+        devin_client = DevinClient()
+        
+        try:
+            session = devin_client.create_scoping_session(
+                repo=f"{owner}/{repo}",
+                issue_number=issue_number,
+                issue_title=issue.title,
+                issue_body=issue.body or "",
+                comments=comment_texts,
+            )
+            logger.info(f"🤖 Devin session created: {session.session_id}")
+        except DevinAPIError as e:
+            logger.error(f"❌ Devin API error: {e}")
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "Failed to create Devin session",
+                    "message": e.message
+                }
+            )
+        
+        # Step 4: If wait=False, return session info immediately
+        if not wait:
+            return {
+                "session_id": session.session_id,
+                "status": session.status,
+                "url": session.url,
+                "message": "Session created. Use GET /api/v1/sessions/{session_id} to check progress.",
+                "issue": {
+                    "owner": owner,
+                    "repo": repo,
+                    "number": issue_number,
+                    "title": issue.title
+                }
+            }
+        
+        # Step 5: If wait=True, poll until complete
+        logger.info(f"⏳ Waiting for Devin to complete scoping...")
+        
+        try:
+            completed_session = devin_client.poll_until_complete(
+                session.session_id,
+                timeout=500,  # 30 minutes
+            )
+        except TimeoutError:
+            logger.warning(f"⏱️ Session timed out")
+            raise HTTPException(
+                status_code=408,
+                detail={
+                    "error": "Session timeout",
+                    "message": "Devin session did not complete within 30 minutes",
+                    "session_id": session.session_id,
+                    "session_url": session.url
+                }
+            )
+        except DevinAPIError as e:
+            logger.error(f"❌ Devin error during polling: {e}")
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "Error while waiting for Devin",
+                    "message": e.message,
+                    "session_id": session.session_id
+                }
+            )
+        
+        # Step 6: Parse scoping output
+        scoping_output = devin_client.parse_scoping_output(completed_session)
+        
+        if not scoping_output:
+            logger.warning("⚠️  No structured output available")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "No scoping output available",
+                    "message": "Devin session completed but did not return structured output",
+                    "session_id": session.session_id,
+                    "session_url": completed_session.url
+                }
+            )
+        
+        # Step 7: Return results
+        logger.info(f"✅ Scoping complete! Confidence: {scoping_output.confidence}")
+        
+        return {
+            "session_id": completed_session.session_id,
+            "status": completed_session.status,
+            "url": completed_session.url,
+            "issue": {
+                "owner": owner,
+                "repo": repo,
+                "number": issue_number,
+                "title": issue.title
+            },
+            "scoping": {
+                "summary": scoping_output.summary,
+                "plan": scoping_output.plan,
+                "risk_level": scoping_output.risk_level,
+                "estimated_effort": scoping_output.estimated_effort,
+                "confidence": scoping_output.confidence,
+            }
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Catch-all for unexpected errors
+        logger.error(f"❌ Unexpected error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": str(e)
+            }
+        )
 
+
+@router.get("/sessions/{session_id}")
+async def get_session_details(session_id: str):
+    """
+    Get details of a specific Devin session.
+    
+    This endpoint retrieves session status and results.
+    """
+    logger.info(f"📊 Fetching session {session_id}")
+    
+    try:
+        devin_client = DevinClient()
+        session = devin_client.get_session(session_id)
+        
+        # Try to parse scoping output if available
+        scoping_output = None
+        if session.structured_output:
+            scoping_output = devin_client.parse_scoping_output(session)
+        
+        response = {
+            "session_id": session.session_id,
+            "status": session.status,
+            "url": session.url,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        }
+        
+        if scoping_output:
+            response["scoping"] = {
+                "summary": scoping_output.summary,
+                "plan": scoping_output.plan,
+                "risk_level": scoping_output.risk_level,
+                "estimated_effort": scoping_output.estimated_effort,
+                "confidence": scoping_output.confidence,
+            }
+        
+        return response
+        
+    except DevinAPIError as e:
+        logger.error(f"❌ Devin API error: {e}")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail={
+                "error": "Failed to fetch session",
+                "message": e.message,
+                "session_id": session_id
+            }
+        )
+
+
+# Placeholder endpoints for Phase 3
 
 @router.post("/execute/{owner}/{repo}/{issue_number}")
 async def execute_issue(owner: str, repo: str, issue_number: int):
     """
-    Execute an issue using Devin.
+    Execute an issue using Devin (Phase 3).
     
     This endpoint will:
     1. Fetch the issue from GitHub
     2. Create a Devin session to implement the fix
     3. Return session ID and PR URL when complete
-
     """
     raise HTTPException(
         status_code=501,
-        detail="To-do"
+        detail="Execute endpoint coming in Phase 3"
     )
 
 
 @router.get("/sessions")
 async def list_sessions():
     """
-    List all Devin sessions.
+    List all Devin sessions (Phase 4).
     """
     raise HTTPException(
         status_code=501,
-        detail="To-do"
-    )
-
-
-@router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    """
-    Get details of a specific Devin session (Phase 4).
-    """
-    raise HTTPException(
-        status_code=501,
-        detail="To-do"
+        detail="Sessions list endpoint coming in Phase 4"
     )
 

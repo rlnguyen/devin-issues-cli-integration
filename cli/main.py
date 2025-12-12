@@ -212,16 +212,134 @@ def scope(
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    🔍 Scope an issue using Devin AI (To-Do).
+    🔍 Scope an issue using Devin AI.
     
     Devin will analyze the issue and provide:
     - Implementation plan
     - Confidence score
     - Risk assessment
     - Estimated effort
+    
+    Examples:
+        devin-issues scope python/cpython 12345
+        devin-issues scope myorg/myrepo 42 --no-wait
     """
-    console.print(f"\n🔍 [yellow]To-do![/yellow]")
-    console.print(f"   Will scope: [cyan]{repo}#{issue_number}[/cyan]\n")
+    # Parse owner/repo
+    try:
+        owner, repo_name = repo.split("/")
+    except ValueError:
+        console.print("❌ [red]Invalid repo format. Use: owner/repo[/red]")
+        raise typer.Exit(1)
+    
+    # Show what we're doing
+    console.print(f"\n🔍 Scoping issue [bold cyan]{owner}/{repo_name}#{issue_number}[/bold cyan]")
+    console.print()
+    
+    # Make API request
+    try:
+        with console.status("[bold green]Running Devin session...", spinner="dots"):
+            response = httpx.post(
+                f"{url}/api/v1/scope/{owner}/{repo_name}/{issue_number}",
+                params={"wait": wait},
+                timeout=None if wait else 30.0,  # No timeout if waiting
+            )
+            response.raise_for_status()
+            data = response.json()
+        
+    except httpx.HTTPError as e:
+        console.print(f"❌ [red]Failed to scope issue: {e}[/red]")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_detail = e.response.json()
+                console.print(f"   [dim]{error_detail.get('detail', {}).get('message', '')}[/dim]")
+            except:
+                pass
+        raise typer.Exit(1)
+    
+    # Display results
+    session_id = data.get("session_id")
+    session_url = data.get("url")
+    issue_info = data.get("issue", {})
+    
+    # Show session info
+    console.print(f"✅ Session created: [cyan]{session_id}[/cyan]")
+    if session_url:
+        console.print(f"🔗 View session: [link={session_url}]{session_url}[/link]")
+    console.print()
+    
+    # If not waiting, show message and exit
+    if not wait:
+        console.print("🤖 [yellow]Devin is analyzing the issue in the background.[/yellow]")
+        console.print(f"   Use [cyan]devin-issues status {session_id}[/cyan] to check progress")
+        console.print()
+        return
+    
+    # If waiting and we have scoping results
+    scoping = data.get("scoping")
+    if not scoping:
+        console.print("⚠️  [yellow]No scoping results available yet[/yellow]")
+        return
+    
+    # Display scoping results beautifully
+    console.print("=" * 80)
+    console.print()
+    
+    # Summary
+    summary_panel = Panel(
+        scoping.get("summary", "No summary available"),
+        title="📝 Summary",
+        border_style="cyan"
+    )
+    console.print(summary_panel)
+    console.print()
+    
+    # Confidence and metrics
+    confidence = scoping.get("confidence", 0.0)
+    confidence_pct = int(confidence * 100)
+    
+    # Color code confidence
+    if confidence_pct >= 80:
+        confidence_color = "bold green"
+        confidence_emoji = "🟢"
+    elif confidence_pct >= 60:
+        confidence_color = "yellow"
+        confidence_emoji = "🟡"
+    else:
+        confidence_color = "red"
+        confidence_emoji = "🔴"
+    
+    metrics_text = f"""[bold]Confidence Score:[/bold] [{confidence_color}]{confidence_emoji} {confidence_pct}%[/{confidence_color}]
+[bold]Risk Level:[/bold] {scoping.get('risk_level', 'unknown').upper()}
+[bold]Estimated Effort:[/bold] {scoping.get('estimated_effort', 0)} hours"""
+    
+    metrics_panel = Panel(
+        metrics_text,
+        title="📊 Metrics",
+        border_style="green"
+    )
+    console.print(metrics_panel)
+    console.print()
+    
+    # Implementation plan
+    plan = scoping.get("plan", [])
+    if plan:
+        console.print("[bold magenta]📋 Implementation Plan:[/bold magenta]")
+        console.print()
+        for i, step in enumerate(plan, 1):
+            console.print(f"  [cyan]{i}.[/cyan] {step}")
+        console.print()
+    
+    console.print("=" * 80)
+    console.print()
+    
+    # Suggest next steps
+    if confidence_pct >= 70:
+        console.print(f"💡 [green]High confidence! Consider executing:[/green]")
+        console.print(f"   [cyan]devin-issues execute {owner}/{repo_name} {issue_number}[/cyan]")
+    else:
+        console.print(f"💡 [yellow]Low confidence. Review the plan carefully before executing.[/yellow]")
+    
+    console.print()
 
 
 @app.command()
