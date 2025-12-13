@@ -391,7 +391,7 @@ async def get_session_details(session_id: str):
         )
 
 
-# Phase 3: Execution endpoint
+# Execution endpoint
 
 @router.post("/execute/{owner}/{repo}/{issue_number}")
 async def execute_issue(
@@ -400,7 +400,7 @@ async def execute_issue(
     issue_number: int,
     wait: bool = Query(
         False,
-        description="Wait for execution to complete (False recommended - execution takes longer)"
+        description="Wait for execution to complete (False recommended)"
     ),
 ):
     """
@@ -416,7 +416,7 @@ async def execute_issue(
     - **owner**: Repository owner
     - **repo**: Repository name
     - **issue_number**: Issue number to execute
-    - **wait**: If True, waits for execution (NOT recommended - can take 10-30 minutes)
+    - **wait**: If True, waits for execution (NOT recommended - can take 10-30 minutes, resulting in terminal hang)
     
     **Returns:**
     - Session metadata
@@ -471,7 +471,7 @@ async def execute_issue(
                 }
             )
         
-        # Step 3: If wait=False, return session info immediately (RECOMMENDED)
+        # Step 3: If wait=False, return session info immediately (RECOMMENDED - Devin executes in background)
         if not wait:
             return {
                 "session_id": session.session_id,
@@ -484,16 +484,19 @@ async def execute_issue(
                     "number": issue_number,
                     "title": issue.title
                 },
-                "note": "Execution typically takes 10-30 minutes. Use GET /api/v1/sessions/{session_id} to check status."
+                "note": "Use GET /api/v1/sessions/{session_id} to check status."
             }
         
         # Step 4: If wait=True, poll until complete (can take a LONG time)
         logger.info(f"⏳ Waiting for Devin to complete execution (this may take 10-30 minutes)...")
-        
+        # While waiting, inform the user to check the session URL to follow progress
+        progress_url = session.url
+        logger.info(f"🔗 Progress: Check status at {progress_url}")
+
         try:
             completed_session = devin_client.poll_until_complete(
                 session.session_id,
-                timeout=3600,  # 60 minutes for execution
+                timeout=6000,  # Max 60 minutes for execution
             )
         except TimeoutError:
             logger.warning(f"⏱️ Execution session timed out")

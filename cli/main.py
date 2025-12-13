@@ -358,7 +358,7 @@ def execute(
     - Run tests
     - Open a Pull Request
     
-    ⚠️  NOTE: Execution takes 10-30 minutes. Using --no-wait is recommended.
+    NOTE: Execution takes 10-30 minutes or longer. Using --no-wait is recommended.
     
     Examples:
         devin-issues execute python/cpython 12345
@@ -376,7 +376,7 @@ def execute(
     console.print()
     
     if wait:
-        console.print("⚠️  [yellow]Warning: Execution can take 10-30 minutes![/yellow]")
+        console.print("⚠️  [yellow]Warning: Execution can take 10-30 minutes or longer, terminal will hang until it completes![/yellow]")
         console.print()
     
     # Make API request
