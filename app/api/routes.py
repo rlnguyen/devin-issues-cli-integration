@@ -266,7 +266,7 @@ async def scope_issue(
         try:
             completed_session = devin_client.poll_until_complete(
                 session.session_id,
-                timeout=500,  # 30 minutes
+                timeout=1800,  # 30 minutes
             )
         except TimeoutError:
             logger.warning(f"⏱️ Session timed out")

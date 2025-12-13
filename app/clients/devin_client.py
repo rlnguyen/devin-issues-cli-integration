@@ -185,8 +185,6 @@ class DevinClient:
         """
         Poll a session until it completes (or times out).
         
-        Uses exponential backoff to be nice to the API.
-        
         Args:
             session_id: Session to poll
             timeout: Maximum time to wait in seconds
