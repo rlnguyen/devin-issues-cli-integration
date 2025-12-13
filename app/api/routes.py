@@ -649,6 +649,7 @@ async def execute_issue(
         False,
         description="Wait for execution to complete (False recommended)"
     ),
+    db: Session = Depends(get_db),
 ):
     """
     🚀 Execute an issue using Devin AI.
@@ -708,6 +709,50 @@ async def execute_issue(
                 scoping_plan=None,  # Could optionally fetch from database
             )
             logger.info(f"🤖 Devin execution session created: {session.session_id}")
+            
+            # Save to database
+            try:
+                # Get or create issue record
+                issue_record, created = get_or_create_issue(
+                    db,
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    title=issue.title,
+                    body=issue.body or "",
+                    state=issue.state,
+                    labels=[label.name for label in issue.labels],
+                )
+                
+                # Create session record
+                session_record = create_session_record(
+                    db,
+                    session_id=session.session_id,
+                    phase="exec",
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    session_url=session.url,
+                    status=session.status,
+                    issue_id=issue_record.id,
+                )
+                
+                # Log event
+                log_event(
+                    db,
+                    event_type="execute_started",
+                    message=f"Started executing {owner}/{repo}#{issue_number}",
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    session_id=session.session_id,
+                )
+                
+                logger.info(f"💾 Saved execution session to database: session_id={session_record.id}")
+            except Exception as e:
+                logger.error(f"⚠️  Failed to save to database: {e}")
+                # Continue even if database save fails
+            
         except DevinAPIError as e:
             logger.error(f"❌ Devin API error: {e}")
             raise HTTPException(
@@ -785,6 +830,54 @@ async def execute_issue(
         
         # Step 6: Return results
         logger.info(f"✅ Execution complete! PR: {execution_output.pr_url}")
+        
+        # Update database with results
+        try:
+            # Update issue record
+            issue_record = db.query(Issue).filter(
+                Issue.owner == owner,
+                Issue.repo == repo,
+                Issue.issue_number == issue_number
+            ).first()
+            
+            if issue_record:
+                issue_record.pr_url = execution_output.pr_url
+                issue_record.branch_name = execution_output.branch
+                issue_record.tests_passed = execution_output.tests_passed
+                issue_record.tests_failed = execution_output.tests_failed
+                issue_record.is_executed = True
+                issue_record.last_executed_at = func.now()
+            
+            # Update session record
+            session_record = db.query(DevinSession).filter(
+                DevinSession.session_id == session.session_id
+            ).first()
+            
+            if session_record:
+                session_record.status = completed_session.status
+                session_record.structured_output = completed_session.structured_output
+                session_record.pr_url = execution_output.pr_url
+                session_record.branch_name = execution_output.branch
+                session_record.tests_passed = execution_output.tests_passed
+                session_record.tests_failed = execution_output.tests_failed
+                session_record.completed_at = func.now()
+            
+            db.commit()
+            
+            # Log event
+            log_event(
+                db,
+                event_type="execute_completed",
+                message=f"Execution completed for {owner}/{repo}#{issue_number} (PR: {execution_output.pr_url})",
+                owner=owner,
+                repo=repo,
+                issue_number=issue_number,
+                session_id=session.session_id,
+            )
+            
+            logger.info("💾 Updated database with execution results")
+        except Exception as e:
+            logger.error(f"⚠️  Failed to update database: {e}")
         
         return {
             "session_id": completed_session.session_id,
