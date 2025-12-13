@@ -391,22 +391,184 @@ async def get_session_details(session_id: str):
         )
 
 
-# Placeholder endpoints for Phase 3
+# Phase 3: Execution endpoint
 
 @router.post("/execute/{owner}/{repo}/{issue_number}")
-async def execute_issue(owner: str, repo: str, issue_number: int):
+async def execute_issue(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    wait: bool = Query(
+        False,
+        description="Wait for execution to complete (False recommended - execution takes longer)"
+    ),
+):
     """
-    Execute an issue using Devin (Phase 3).
+    🚀 Execute an issue using Devin AI.
     
-    This endpoint will:
-    1. Fetch the issue from GitHub
-    2. Create a Devin session to implement the fix
-    3. Return session ID and PR URL when complete
+    This endpoint:
+    1. Fetches the issue from GitHub
+    2. Optionally fetches the scoping plan if available
+    3. Creates a Devin session to implement the fix
+    4. Returns session ID (or waits for PR creation if wait=True)
+    
+    **Parameters:**
+    - **owner**: Repository owner
+    - **repo**: Repository name
+    - **issue_number**: Issue number to execute
+    - **wait**: If True, waits for execution (NOT recommended - can take 10-30 minutes)
+    
+    **Returns:**
+    - Session metadata
+    - Execution output (PR URL, branch, test results) if wait=True and session completes
+    
+    **Example:**
+    ```
+    POST /api/v1/execute/python/cpython/12345?wait=false
+    ```
     """
-    raise HTTPException(
-        status_code=501,
-        detail="Execute endpoint coming in Phase 3"
-    )
+    logger.info(f"🚀 Executing {owner}/{repo}#{issue_number} (wait={wait})")
+    
+    try:
+        # Step 1: Fetch issue from GitHub
+        github_client = GitHubClient()
+        
+        try:
+            issue = github_client.get_issue(owner, repo, issue_number)
+            logger.info(f"📋 Fetched issue: {issue.title}")
+        except GitHubAPIError as e:
+            logger.error(f"❌ GitHub error: {e}")
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "Failed to fetch issue from GitHub",
+                    "message": e.message,
+                    "owner": owner,
+                    "repo": repo,
+                    "issue_number": issue_number
+                }
+            )
+        
+        # Step 2: Create Devin execution session
+        devin_client = DevinClient()
+        
+        try:
+            session = devin_client.create_execution_session(
+                repo=f"{owner}/{repo}",
+                issue_number=issue_number,
+                issue_title=issue.title,
+                issue_body=issue.body or "",
+                scoping_plan=None,  # Could optionally fetch from database
+            )
+            logger.info(f"🤖 Devin execution session created: {session.session_id}")
+        except DevinAPIError as e:
+            logger.error(f"❌ Devin API error: {e}")
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "Failed to create Devin execution session",
+                    "message": e.message
+                }
+            )
+        
+        # Step 3: If wait=False, return session info immediately (RECOMMENDED)
+        if not wait:
+            return {
+                "session_id": session.session_id,
+                "status": session.status,
+                "url": session.url,
+                "message": "Execution session created. Check Devin dashboard for progress.",
+                "issue": {
+                    "owner": owner,
+                    "repo": repo,
+                    "number": issue_number,
+                    "title": issue.title
+                },
+                "note": "Execution typically takes 10-30 minutes. Use GET /api/v1/sessions/{session_id} to check status."
+            }
+        
+        # Step 4: If wait=True, poll until complete (can take a LONG time)
+        logger.info(f"⏳ Waiting for Devin to complete execution (this may take 10-30 minutes)...")
+        
+        try:
+            completed_session = devin_client.poll_until_complete(
+                session.session_id,
+                timeout=3600,  # 60 minutes for execution
+            )
+        except TimeoutError:
+            logger.warning(f"⏱️ Execution session timed out")
+            raise HTTPException(
+                status_code=408,
+                detail={
+                    "error": "Session timeout",
+                    "message": "Devin execution did not complete within 60 minutes",
+                    "session_id": session.session_id,
+                    "session_url": session.url,
+                    "note": "Check the session URL to see Devin's progress"
+                }
+            )
+        except DevinAPIError as e:
+            logger.error(f"❌ Devin error during polling: {e}")
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    "error": "Error while waiting for Devin",
+                    "message": e.message,
+                    "session_id": session.session_id
+                }
+            )
+        
+        # Step 5: Parse execution output
+        execution_output = devin_client.parse_execution_output(completed_session)
+        
+        if not execution_output:
+            logger.warning("⚠️  No execution output available")
+            return {
+                "session_id": session.session_id,
+                "status": completed_session.status,
+                "url": completed_session.url,
+                "message": "Session completed but no structured output available. Check session URL.",
+                "issue": {
+                    "owner": owner,
+                    "repo": repo,
+                    "number": issue_number,
+                    "title": issue.title
+                }
+            }
+        
+        # Step 6: Return results
+        logger.info(f"✅ Execution complete! PR: {execution_output.pr_url}")
+        
+        return {
+            "session_id": completed_session.session_id,
+            "status": completed_session.status,
+            "url": completed_session.url,
+            "issue": {
+                "owner": owner,
+                "repo": repo,
+                "number": issue_number,
+                "title": issue.title
+            },
+            "execution": {
+                "status": execution_output.status,
+                "branch": execution_output.branch,
+                "pr_url": execution_output.pr_url,
+                "tests_passed": execution_output.tests_passed,
+                "tests_failed": execution_output.tests_failed,
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": str(e)
+            }
+        )
 
 
 @router.get("/sessions")

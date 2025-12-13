@@ -346,20 +346,150 @@ def scope(
 def execute(
     repo: str = typer.Argument(..., help="Repository in 'owner/repo' format"),
     issue_number: int = typer.Argument(..., help="Issue number to execute"),
-    wait: bool = typer.Option(False, "--wait/--no-wait", help="Wait for execution to complete"),
+    wait: bool = typer.Option(False, "--wait/--no-wait", help="Wait for execution to complete (NOT recommended)"),
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    🚀 Execute an issue using Devin AI (To-do).
+    🚀 Execute an issue using Devin AI.
     
     Devin will:
     - Create a feature branch
     - Implement the fix
     - Run tests
     - Open a Pull Request
+    
+    ⚠️  NOTE: Execution takes 10-30 minutes. Using --no-wait is recommended.
+    
+    Examples:
+        devin-issues execute python/cpython 12345
+        devin-issues execute myorg/myrepo 42 --wait
     """
-    console.print(f"\n🚀 [yellow]To-do![/yellow]")
-    console.print(f"   Will execute: [cyan]{repo}#{issue_number}[/cyan]\n")
+    # Parse owner/repo
+    try:
+        owner, repo_name = repo.split("/")
+    except ValueError:
+        console.print("❌ [red]Invalid repo format. Use: owner/repo[/red]")
+        raise typer.Exit(1)
+    
+    # Show what we're doing
+    console.print(f"\n🚀 Executing issue [bold cyan]{owner}/{repo_name}#{issue_number}[/bold cyan]")
+    console.print()
+    
+    if wait:
+        console.print("⚠️  [yellow]Warning: Execution can take 10-30 minutes![/yellow]")
+        console.print()
+    
+    # Make API request
+    try:
+        with console.status("[bold green]Creating execution session...", spinner="dots"):
+            response = httpx.post(
+                f"{url}/api/v1/execute/{owner}/{repo_name}/{issue_number}",
+                params={"wait": wait},
+                timeout=None if wait else 30.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+        
+    except httpx.HTTPError as e:
+        console.print(f"❌ [red]Failed to execute issue: {e}[/red]")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_detail = e.response.json()
+                console.print(f"   [dim]{error_detail.get('detail', {}).get('message', '')}[/dim]")
+            except:
+                pass
+        raise typer.Exit(1)
+    
+    # Display results
+    session_id = data.get("session_id")
+    session_url = data.get("url")
+    issue_info = data.get("issue", {})
+    
+    # Show session info
+    console.print(f"✅ Execution session created: [cyan]{session_id}[/cyan]")
+    if session_url:
+        console.print(f"🔗 View session: [link={session_url}]{session_url}[/link]")
+    console.print()
+    
+    # If not waiting, show message and exit
+    if not wait:
+        console.print("🤖 [yellow]Devin is implementing the fix in the background.[/yellow]")
+        console.print()
+        console.print("📝 [bold]What Devin will do:[/bold]")
+        console.print("   1. Clone the repository")
+        console.print("   2. Create a feature branch")
+        console.print("   3. Implement the fix")
+        console.print("   4. Run tests")
+        console.print("   5. Open a Pull Request")
+        console.print()
+        console.print(f"⏱️  [dim]This typically takes 10-30 minutes[/dim]")
+        console.print(f"🔍 Track progress at: {session_url}")
+        console.print()
+        console.print(f"💡 Check status: [cyan]devin-issues status {session_id}[/cyan]")
+        console.print()
+        return
+    
+    # If waiting and we have execution results
+    execution = data.get("execution")
+    if not execution:
+        console.print("⚠️  [yellow]Execution session completed but no results available yet[/yellow]")
+        console.print(f"   Check: {session_url}")
+        return
+    
+    # Display execution results
+    console.print("=" * 80)
+    console.print()
+    
+    # Status
+    exec_status = execution.get("status", "unknown")
+    if exec_status.lower() in ["done", "completed", "finished"]:
+        status_emoji = "✅"
+        status_color = "green"
+    elif exec_status.lower() in ["failed", "error"]:
+        status_emoji = "❌"
+        status_color = "red"
+    else:
+        status_emoji = "⏸️"
+        status_color = "yellow"
+    
+    console.print(f"{status_emoji} [bold {status_color}]Status: {exec_status.upper()}[/bold {status_color}]")
+    console.print()
+    
+    # Branch and PR
+    branch = execution.get("branch")
+    pr_url = execution.get("pr_url")
+    
+    if branch:
+        console.print(f"🌿 [bold]Branch:[/bold] [cyan]{branch}[/cyan]")
+    
+    if pr_url:
+        console.print(f"🔗 [bold]Pull Request:[/bold] [link={pr_url}]{pr_url}[/link]")
+        console.print()
+    
+    # Test results
+    tests_passed = execution.get("tests_passed", 0)
+    tests_failed = execution.get("tests_failed", 0)
+    
+    if tests_passed or tests_failed:
+        total_tests = tests_passed + tests_failed
+        pass_rate = (tests_passed / total_tests * 100) if total_tests > 0 else 0
+        
+        console.print(f"🧪 [bold]Test Results:[/bold]")
+        console.print(f"   ✅ Passed: [green]{tests_passed}[/green]")
+        console.print(f"   ❌ Failed: [red]{tests_failed}[/red]")
+        console.print(f"   📊 Pass Rate: {pass_rate:.1f}%")
+        console.print()
+    
+    console.print("=" * 80)
+    console.print()
+    
+    # Next steps
+    if pr_url:
+        console.print(f"💡 [green]Review and merge the PR:[/green] {pr_url}")
+    else:
+        console.print(f"💡 [yellow]Check the session for details:[/yellow] {session_url}")
+    
+    console.print()
 
 
 @app.command()
