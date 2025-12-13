@@ -92,7 +92,7 @@ def list(
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    📋 List GitHub issues with smart filtering.
+    List GitHub issues with smart filtering.
     
     Examples:
         devin-issues list python/cpython --label type-bug
@@ -212,7 +212,7 @@ def scope(
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    🔍 Scope an issue using Devin AI.
+    Scope an issue using Devin AI.
     
     Devin will analyze the issue and provide:
     - Implementation plan
@@ -280,7 +280,7 @@ def scope(
         console.print("⚠️  [yellow]No scoping results available yet[/yellow]")
         return
     
-    # Display scoping results beautifully
+    # Display scoping results
     console.print("=" * 80)
     console.print()
     
@@ -350,7 +350,7 @@ def execute(
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    🚀 Execute an issue using Devin AI.
+    Execute an issue using Devin AI.
     
     Devin will:
     - Create a feature branch
@@ -416,13 +416,12 @@ def execute(
         console.print("🤖 [yellow]Devin is implementing the fix in the background.[/yellow]")
         console.print()
         console.print("📝 [bold]What Devin will do:[/bold]")
-        console.print("   1. Clone the repository")
+        console.print("   1. Clone the repository (if not already cloned)")
         console.print("   2. Create a feature branch")
         console.print("   3. Implement the fix")
         console.print("   4. Run tests")
         console.print("   5. Open a Pull Request")
         console.print()
-        console.print(f"⏱️  [dim]This typically takes 10-30 minutes[/dim]")
         console.print(f"🔍 Track progress at: {session_url}")
         console.print()
         console.print(f"💡 Check status: [cyan]devin-issues status {session_id}[/cyan]")
@@ -502,12 +501,12 @@ def status(
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    📊 Check status of Devin sessions.
+    Check status of Devin sessions.
     
     View all sessions or get details of a specific session.
     
     Examples:
-        devin-issues status                              # List all recent sessions
+        devin-issues status                               # List all recent sessions
         devin-issues status SESSION_ID                    # Check specific session
         devin-issues status --repo python/cpython         # Filter by repo
         devin-issues status --repo myorg/myrepo -i 42     # Filter by issue

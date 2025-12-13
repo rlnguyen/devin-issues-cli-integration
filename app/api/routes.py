@@ -20,7 +20,6 @@ from sqlalchemy import func
 from app.clients.github_client import GitHubClient, GitHubAPIError
 from app.clients.devin_client import DevinClient, DevinAPIError
 from app.pyd_models.github_models import GitHubIssue
-from app.pyd_models.devin_models import ScopingOutput, SessionResponse
 from app.database import get_db
 from app.models import get_or_create_issue, create_session_record, log_event, DevinSession, Issue
 
@@ -174,7 +173,7 @@ async def scope_issue(
     db: Session = Depends(get_db),
 ):
     """
-    🔍 Scope an issue using Devin AI.
+    Scope an issue using Devin AI.
     
     This endpoint:
     1. Fetches the issue and comments from GitHub
@@ -652,7 +651,7 @@ async def execute_issue(
     db: Session = Depends(get_db),
 ):
     """
-    🚀 Execute an issue using Devin AI.
+    Execute an issue using Devin AI.
     
     This endpoint:
     1. Fetches the issue from GitHub
@@ -909,15 +908,4 @@ async def execute_issue(
                 "message": str(e)
             }
         )
-
-
-@router.get("/sessions")
-async def list_sessions():
-    """
-    List all Devin sessions (Phase 4).
-    """
-    raise HTTPException(
-        status_code=501,
-        detail="Sessions list endpoint coming in Phase 4"
-    )
 

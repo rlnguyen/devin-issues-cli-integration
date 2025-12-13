@@ -67,7 +67,7 @@ def init_db():
     """
     from app.models import Issue, DevinSession, Event
     
-    logger.info("🗄️  Initializing database...")
+    logger.info("Initializing database...")
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Database initialized")
 
@@ -76,7 +76,7 @@ def drop_all_tables():
     """
     Drop all tables in the database.
     
-    ⚠️  WARNING: This will delete all data!
+    WARNING: This will delete all data!
     Only use for testing or resetting the database.
     """
     logger.warning("⚠️  Dropping all database tables...")

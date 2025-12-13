@@ -2,9 +2,13 @@
 """
 Devin Issues CLI Entry Point
 
-This is a DEMO convenience script that allows running the CLI as:
+Convenience script that allows running the CLI as (for example):
     ./devin-issues list python/cpython
-    
+    ./devin-issues status <session_id>
+    ./devin-issues scope python/cpython 12345
+    ./devin-issues execute python/cpython 12345
+    ./devin-issues ... and so on
+
 Instead of:
     python -m cli.main list python/cpython
 """
