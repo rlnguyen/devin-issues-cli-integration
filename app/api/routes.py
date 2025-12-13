@@ -438,16 +438,167 @@ async def scope_issue(
         )
 
 
+@router.get("/sessions")
+async def list_sessions(
+    repo: Optional[str] = Query(None, description="Filter by repository (owner/repo)"),
+    issue_number: Optional[int] = Query(None, description="Filter by issue number (requires repo)"),
+    phase: Optional[str] = Query(None, description="Filter by phase (scope or exec)"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum sessions to return"),
+    db: Session = Depends(get_db),
+):
+    """
+    List Devin sessions with optional filtering.
+    
+    **Parameters:**
+    - **repo**: Filter by repository (e.g., "python/cpython")
+    - **issue_number**: Filter by issue number (requires repo)
+    - **phase**: Filter by phase ("scope" or "exec")
+    - **limit**: Maximum number of sessions to return (default 20, max 100)
+    
+    **Returns:**
+    - List of sessions with metadata
+    
+    **Example:**
+    ```
+    GET /api/v1/sessions?repo=python/cpython&phase=scope&limit=10
+    ```
+    """
+    logger.info(f"📊 Listing sessions (repo={repo}, issue={issue_number}, phase={phase}, limit={limit})")
+    
+    try:
+        # Build query
+        query = db.query(DevinSession).order_by(DevinSession.created_at.desc())
+        
+        # Apply filters
+        if repo:
+            try:
+                owner, repo_name = repo.split("/")
+                query = query.filter(
+                    DevinSession.owner == owner,
+                    DevinSession.repo == repo_name
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid repo format. Use: owner/repo"
+                )
+        
+        if issue_number:
+            if not repo:
+                raise HTTPException(
+                    status_code=400,
+                    detail="issue_number requires repo parameter"
+                )
+            query = query.filter(DevinSession.issue_number == issue_number)
+        
+        if phase:
+            if phase not in ["scope", "exec"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="phase must be 'scope' or 'exec'"
+                )
+            query = query.filter(DevinSession.phase == phase)
+        
+        # Execute query
+        sessions = query.limit(limit).all()
+        
+        # Format response
+        results = []
+        for session in sessions:
+            result = {
+                "session_id": session.session_id,
+                "phase": session.phase,
+                "status": session.status,
+                "repo": f"{session.owner}/{session.repo}",
+                "issue_number": session.issue_number,
+                "session_url": session.session_url,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+            }
+            
+            # Add phase-specific data
+            if session.phase == "scope" and session.confidence:
+                result["confidence"] = session.confidence
+                result["risk_level"] = session.risk_level
+                result["estimated_effort"] = session.estimated_effort
+            elif session.phase == "exec" and session.pr_url:
+                result["pr_url"] = session.pr_url
+                result["branch"] = session.branch_name
+            
+            results.append(result)
+        
+        logger.info(f"✅ Found {len(results)} sessions")
+        
+        return {
+            "total": len(results),
+            "limit": limit,
+            "sessions": results
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error listing sessions: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": str(e)
+            }
+        )
+
+
 @router.get("/sessions/{session_id}")
-async def get_session_details(session_id: str):
+async def get_session_details(session_id: str, db: Session = Depends(get_db)):
     """
     Get details of a specific Devin session.
     
     This endpoint retrieves session status and results.
+    Also checks the database for stored information.
     """
     logger.info(f"📊 Fetching session {session_id}")
     
     try:
+        # First, check database for stored session
+        session_record = db.query(DevinSession).filter(
+            DevinSession.session_id == session_id
+        ).first()
+        
+        if session_record:
+            logger.info(f"💾 Found session in database")
+            
+            response = {
+                "session_id": session_record.session_id,
+                "status": session_record.status,
+                "url": session_record.session_url,
+                "phase": session_record.phase,
+                "repo": f"{session_record.owner}/{session_record.repo}",
+                "issue_number": session_record.issue_number,
+                "created_at": session_record.created_at.isoformat() if session_record.created_at else None,
+                "completed_at": session_record.completed_at.isoformat() if session_record.completed_at else None,
+            }
+            
+            # Add scoping data if available
+            if session_record.phase == "scope" and session_record.confidence:
+                response["scoping"] = {
+                    "confidence": session_record.confidence,
+                    "risk_level": session_record.risk_level,
+                    "estimated_effort": session_record.estimated_effort,
+                }
+            
+            # Add execution data if available
+            if session_record.phase == "exec" and session_record.pr_url:
+                response["execution"] = {
+                    "pr_url": session_record.pr_url,
+                    "branch": session_record.branch_name,
+                    "tests_passed": session_record.tests_passed,
+                    "tests_failed": session_record.tests_failed,
+                }
+            
+            return response
+        
+        # If not in database, try fetching from Devin API directly
+        logger.info(f"🔍 Session not in database, checking Devin API")
         devin_client = DevinClient()
         session = devin_client.get_session(session_id)
         
@@ -460,8 +611,8 @@ async def get_session_details(session_id: str):
             "session_id": session.session_id,
             "status": session.status,
             "url": session.url,
-            "created_at": session.created_at,
-            "updated_at": session.updated_at,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         }
         
         if scoping_output:

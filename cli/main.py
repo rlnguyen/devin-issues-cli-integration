@@ -494,22 +494,176 @@ def execute(
 
 @app.command()
 def status(
-    session_id: Optional[str] = typer.Argument(None, help="Session ID to check"),
-    repo: Optional[str] = typer.Option(None, "--repo", "-r", help="Filter by repository"),
-    issue: Optional[int] = typer.Option(None, "--issue", "-i", help="Filter by issue number"),
+    session_id: Optional[str] = typer.Argument(None, help="Session ID to check (optional)"),
+    repo: Optional[str] = typer.Option(None, "--repo", "-r", help="Filter by repository (owner/repo)"),
+    issue: Optional[int] = typer.Option(None, "--issue", "-i", help="Filter by issue number (requires --repo)"),
+    phase: Optional[str] = typer.Option(None, "--phase", "-p", help="Filter by phase (scope or exec)"),
     limit: int = typer.Option(20, "--limit", "-l", help="Maximum sessions to show"),
     url: str = typer.Option(DEFAULT_ORCHESTRATOR_URL, "--url", "-u", help="Orchestrator URL"),
 ):
     """
-    📊 Check status of Devin sessions (To-do).
+    📊 Check status of Devin sessions.
     
     View all sessions or get details of a specific session.
+    
+    Examples:
+        devin-issues status                              # List all recent sessions
+        devin-issues status SESSION_ID                    # Check specific session
+        devin-issues status --repo python/cpython         # Filter by repo
+        devin-issues status --repo myorg/myrepo -i 42     # Filter by issue
+        devin-issues status --phase scope                 # Only scoping sessions
     """
-    console.print(f"\n📊 [yellow]Status command coming in Phase 4![/yellow]")
     if session_id:
-        console.print(f"   Will check session: [cyan]{session_id}[/cyan]\n")
+        # Get details of specific session
+        console.print(f"\n🔍 Fetching session [cyan]{session_id}[/cyan]...\n")
+        
+        try:
+            response = httpx.get(
+                f"{url}/api/v1/sessions/{session_id}",
+                timeout=30.0
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPError as e:
+            console.print(f"❌ [red]Failed to fetch session: {e}[/red]")
+            raise typer.Exit(1)
+        
+        # Display session details
+        console.print(f"[bold]Session ID:[/bold] {data.get('session_id')}")
+        console.print(f"[bold]Status:[/bold] {data.get('status', 'unknown')}")
+        
+        if data.get('phase'):
+            console.print(f"[bold]Phase:[/bold] {data.get('phase')}")
+        
+        if data.get('repo'):
+            console.print(f"[bold]Repository:[/bold] {data.get('repo')}")
+        
+        if data.get('issue_number'):
+            console.print(f"[bold]Issue:[/bold] #{data.get('issue_number')}")
+        
+        if data.get('url'):
+            console.print(f"[bold]URL:[/bold] [link={data.get('url')}]{data.get('url')}[/link]")
+        
+        if data.get('created_at'):
+            console.print(f"[bold]Created:[/bold] {data.get('created_at')}")
+        
+        if data.get('completed_at'):
+            console.print(f"[bold]Completed:[/bold] {data.get('completed_at')}")
+        
+        # Show scoping results if available
+        scoping = data.get('scoping')
+        if scoping:
+            console.print()
+            console.print("[bold cyan]📋 Scoping Results:[/bold cyan]")
+            console.print(f"  Confidence: {scoping.get('confidence', 0) * 100:.0f}%")
+            console.print(f"  Risk Level: {scoping.get('risk_level', 'unknown').upper()}")
+            console.print(f"  Estimated Effort: {scoping.get('estimated_effort', 0)} hours")
+        
+        # Show execution results if available
+        execution = data.get('execution')
+        if execution:
+            console.print()
+            console.print("[bold green]🚀 Execution Results:[/bold green]")
+            if execution.get('pr_url'):
+                console.print(f"  PR: {execution.get('pr_url')}")
+            if execution.get('branch'):
+                console.print(f"  Branch: {execution.get('branch')}")
+            if execution.get('tests_passed') is not None:
+                console.print(f"  Tests Passed: {execution.get('tests_passed')}")
+                console.print(f"  Tests Failed: {execution.get('tests_failed')}")
+        
+        console.print()
+        
     else:
-        console.print(f"   Will list recent sessions\n")
+        # List all sessions with filters
+        console.print("\n📊 Fetching sessions...\n")
+        
+        try:
+            params = {"limit": limit}
+            if repo:
+                params["repo"] = repo
+            if issue:
+                params["issue_number"] = issue
+            if phase:
+                params["phase"] = phase
+            
+            response = httpx.get(
+                f"{url}/api/v1/sessions",
+                params=params,
+                timeout=30.0
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPError as e:
+            console.print(f"❌ [red]Failed to fetch sessions: {e}[/red]")
+            raise typer.Exit(1)
+        
+        sessions = data.get("sessions", [])
+        
+        if not sessions:
+            console.print("📭 [yellow]No sessions found matching your criteria.[/yellow]\n")
+            return
+        
+        # Create table
+        table = Table(
+            title=f"Recent Sessions ({data.get('total')} found)",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold magenta",
+        )
+        
+        table.add_column("Session ID", style="cyan", width=20)
+        table.add_column("Repo", style="white", width=25)
+        table.add_column("Issue", justify="right", style="yellow", width=8)
+        table.add_column("Phase", style="blue", width=8)
+        table.add_column("Status", style="green", width=10)
+        table.add_column("Confidence", justify="right", style="cyan", width=12)
+        table.add_column("Created", style="dim", width=12)
+        
+        for session in sessions:
+            session_id_short = session['session_id'][:20] + "..."
+            repo_name = session.get('repo', 'unknown')
+            issue_num = f"#{session.get('issue_number', '?')}"
+            phase_display = session.get('phase', '?')
+            status_display = session.get('status', 'unknown')
+            
+            # Confidence (for scope sessions)
+            confidence = session.get('confidence')
+            if confidence:
+                conf_pct = int(confidence * 100)
+                if conf_pct >= 80:
+                    confidence_display = f"[green]{conf_pct}%[/green]"
+                elif conf_pct >= 60:
+                    confidence_display = f"[yellow]{conf_pct}%[/yellow]"
+                else:
+                    confidence_display = f"[red]{conf_pct}%[/red]"
+            else:
+                confidence_display = "[dim]-[/dim]"
+            
+            # Format created date
+            created = session.get('created_at', '')
+            if created:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                    created_display = dt.strftime('%m/%d %H:%M')
+                except:
+                    created_display = created[:10]
+            else:
+                created_display = "unknown"
+            
+            table.add_row(
+                session_id_short,
+                repo_name,
+                issue_num,
+                phase_display,
+                status_display,
+                confidence_display,
+                created_display
+            )
+        
+        console.print(table)
+        console.print(f"\n💡 [dim]Use 'devin-issues status SESSION_ID' for details[/dim]\n")
 
 
 @app.command()
