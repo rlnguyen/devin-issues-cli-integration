@@ -160,8 +160,11 @@ class GitHubClient:
         # Make the request
         response_data = self._make_request("GET", endpoint, params=params)
         
+        # Filter out pull requests - GitHub includes PRs in the issues endpoint
+        issues_only = [item for item in response_data if "pull_request" not in item]
+        
         # Parse response into Pydantic models to auto-validate data
-        issues = [GitHubIssue(**issue_data) for issue_data in response_data]
+        issues = [GitHubIssue(**issue_data) for issue_data in issues_only]
         
         return issues
     
