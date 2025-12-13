@@ -99,6 +99,14 @@ async def startup_event():
     logger.info(f"📍 Orchestrator: {settings.orchestrator_host}:{settings.orchestrator_port}")
     logger.info(f"🔗 Devin API: {settings.devin_api_url}")
     
+    # Initialize database
+    from app.database import init_db
+    try:
+        init_db()
+        logger.info("✅ Database initialized")
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+    
     # Validate configuration
     try:
         from app.config import validate_settings

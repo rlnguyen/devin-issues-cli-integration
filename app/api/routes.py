@@ -11,14 +11,18 @@ Endpoints:
 - GET /api/v1/sessions/{session_id} - Get session details (To-do)
 """
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from typing import List, Optional
 import logging
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.clients.github_client import GitHubClient, GitHubAPIError
 from app.clients.devin_client import DevinClient, DevinAPIError
 from app.pyd_models.github_models import GitHubIssue
 from app.pyd_models.devin_models import ScopingOutput, SessionResponse
+from app.database import get_db
+from app.models import get_or_create_issue, create_session_record, log_event, DevinSession, Issue
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +171,7 @@ async def scope_issue(
         True,
         description="Wait for scoping to complete (True) or return session ID immediately (False)"
     ),
+    db: Session = Depends(get_db),
 ):
     """
     🔍 Scope an issue using Devin AI.
@@ -235,6 +240,50 @@ async def scope_issue(
                 comments=comment_texts,
             )
             logger.info(f"🤖 Devin session created: {session.session_id}")
+            
+            # Save to database
+            try:
+                # Get or create issue record
+                issue_record, created = get_or_create_issue(
+                    db,
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    title=issue.title,
+                    body=issue.body or "",
+                    state=issue.state,
+                    labels=[label.name for label in issue.labels],
+                )
+                
+                # Create session record
+                session_record = create_session_record(
+                    db,
+                    session_id=session.session_id,
+                    phase="scope",
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    session_url=session.url,
+                    status=session.status,
+                    issue_id=issue_record.id,
+                )
+                
+                # Log event
+                log_event(
+                    db,
+                    event_type="scope_started",
+                    message=f"Started scoping {owner}/{repo}#{issue_number}",
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    session_id=session.session_id,
+                )
+                
+                logger.info(f"💾 Saved to database: session_id={session_record.id}")
+            except Exception as e:
+                logger.error(f"⚠️  Failed to save to database: {e}")
+                # Continue even if database save fails
+            
         except DevinAPIError as e:
             logger.error(f"❌ Devin API error: {e}")
             raise HTTPException(
@@ -307,6 +356,53 @@ async def scope_issue(
         
         # Step 7: Return results
         logger.info(f"✅ Scoping complete! Confidence: {scoping_output.confidence}")
+        
+        # Update database with results
+        try:
+            # Update issue record
+            issue_record = db.query(Issue).filter(
+                Issue.owner == owner,
+                Issue.repo == repo,
+                Issue.issue_number == issue_number
+            ).first()
+            
+            if issue_record:
+                issue_record.confidence = scoping_output.confidence
+                issue_record.risk_level = scoping_output.risk_level
+                issue_record.estimated_effort = scoping_output.estimated_effort
+                issue_record.implementation_plan = scoping_output.plan
+                issue_record.is_scoped = True
+                issue_record.last_scoped_at = func.now()
+            
+            # Update session record
+            session_record = db.query(DevinSession).filter(
+                DevinSession.session_id == session.session_id
+            ).first()
+            
+            if session_record:
+                session_record.status = completed_session.status
+                session_record.structured_output = completed_session.structured_output
+                session_record.confidence = scoping_output.confidence
+                session_record.risk_level = scoping_output.risk_level
+                session_record.estimated_effort = scoping_output.estimated_effort
+                session_record.completed_at = func.now()
+            
+            db.commit()
+            
+            # Log event
+            log_event(
+                db,
+                event_type="scope_completed",
+                message=f"Scoping completed for {owner}/{repo}#{issue_number} (confidence: {scoping_output.confidence})",
+                owner=owner,
+                repo=repo,
+                issue_number=issue_number,
+                session_id=session.session_id,
+            )
+            
+            logger.info("💾 Updated database with scoping results")
+        except Exception as e:
+            logger.error(f"⚠️  Failed to update database: {e}")
         
         return {
             "session_id": completed_session.session_id,
