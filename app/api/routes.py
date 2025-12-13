@@ -489,9 +489,6 @@ async def execute_issue(
         
         # Step 4: If wait=True, poll until complete (can take a LONG time)
         logger.info(f"⏳ Waiting for Devin to complete execution (this may take 10-30 minutes)...")
-        # While waiting, inform the user to check the session URL to follow progress
-        progress_url = session.url
-        logger.info(f"🔗 Progress: Check status at {progress_url}")
 
         try:
             completed_session = devin_client.poll_until_complete(
